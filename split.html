@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Half D20 Die</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      color: white;
+      position: relative;
+    }
+    #plot {
+      width: 100vw;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    .back-button {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: steelblue;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+      z-index: 10;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .back-button:hover {
+      background: #2c6e9b;
+      transform: translateX(-50%) scale(1.05);
+    }
+  </style>
+</head>
+<body>
+  <div id="plot"></div>
+  <button class="back-button" onclick="window.location.href='index.html'">Unsplit D20</button>
+
+  <script>
+    // Golden ratio
+    const phi = (1 + Math.sqrt(5)) / 2;
+
+    // Canonical icosahedron vertices (12 total)
+    let vertices = [
+      [0, 1, phi], [0, -1, phi], [0, 1, -phi], [0, -1, -phi],
+      [1, phi, 0], [-1, phi, 0], [1, -phi, 0], [-1, -phi, 0],
+      [phi, 0, 1], [-phi, 0, 1], [phi, 0, -1], [-phi, 0, -1]
+    ];
+
+    // Normalize to unit sphere
+    const norm = Math.sqrt(0*0 + 1*1 + phi*phi);
+    vertices = vertices.map(v => v.map(coord => coord / norm));
+
+    // Align top vertex to Z-axis (rotate [0,1,phi] → [0,0,1])
+    const v = [0, 1/norm, phi/norm];
+    const zAxis = [0, 0, 1];
+    const dot = v[2]; // dot product with z-axis
+    const angle = Math.acos(dot);
+    const axis = [-v[1], v[0], 0]; // cross([0,1,phi], [0,0,1]) = [-1, 0, 0] scaled
+    const axisNorm = Math.sqrt(axis[0]**2 + axis[1]**2);
+    const ax = axisNorm > 1e-8 ? axis.map(c => c / axisNorm) : [1, 0, 0];
+
+    // Rodrigues' rotation
+    function rotatePoint(p, axis, theta) {
+      const [x, y, z] = p;
+      const [u, v, w] = axis;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+      const r = [
+        u*(u*x + v*y + w*z)*(1 - cosT) + x*cosT + (-w*y + v*z)*sinT,
+        v*(u*x + v*y + w*z)*(1 - cosT) + y*cosT + (w*x - u*z)*sinT,
+        w*(u*x + v*y + w*z)*(1 - cosT) + z*cosT + (-v*x + u*y)*sinT
+      ];
+      return r;
+    }
+
+    const rotated = vertices.map(p => rotatePoint(p, ax, -angle));
+
+    // Sort by Z descending
+    rotated.sort((a, b) => b[2] - a[2]);
+    const apex = rotated[0];
+    const base = rotated.slice(1, 11);
+
+    // Sort base vertices by angle around Z-axis (counter-clockwise)
+    base.sort((a, b) => Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]));
+
+    // Collect all vertices (apex + base)
+    const allVerts = [apex, ...base];
+    const x = allVerts.map(v => v[0]);
+    const y = allVerts.map(v => v[1]);
+    const z = allVerts.map(v => v[2]);
+
+    // Define 10 triangular faces: apex -> base[i] -> base[i+1]
+    const i = [], j = [], k = [];
+    for (let idx = 0; idx < 10; idx++) {
+      i.push(0);           // apex
+      j.push(idx + 1);     // base vertex i
+      k.push((idx + 1) % 10 + 1); // base vertex i+1
+    }
+
+    // Add decagonal base face (reverse order for correct normal)
+    const baseFaceI = [];
+    const baseFaceJ = [];
+    const baseFaceK = [];
+    for (let idx = 0; idx < 10; idx++) {
+      baseFaceI.push(1 + idx);
+      baseFaceJ.push(1 + ((idx + 1) % 10));
+      baseFaceK.push(1 + ((idx + 2) % 10));
+    }
+
+    // Combine faces
+    const totalI = [...i, ...baseFaceI];
+    const totalJ = [...j, ...baseFaceJ];
+    const totalK = [...k, ...baseFaceK];
+
+    // Create main mesh — PURE SOLID COLOR, NO LIGHTING ARTIFACTS
+    const mesh = {
+      type: 'mesh3d',
+      x: x,
+      y: y,
+      z: z,
+      i: totalI,
+      j: totalJ,
+      k: totalK,
+      color: '#2c6e9b', // Your exact steelblue
+      opacity: 1.0,     // Fully solid
+      flatshading: true, // No gradients — pure solid color
+      lighting: {
+        ambient: 0.5,   // Soft ambient to avoid pitch black
+        diffuse: 0.5,
+        specular: 0.0,  // No shiny highlights
+        roughness: 1.0, // Matte finish
+        fresnel: 0.0
+      },
+      lightposition: { x: 100, y: 200, z: 100 } // Still needed for some shading
+    };
+
+    // Add white edge lines for clarity
+    const edgeTraces = [];
+    for (let f = 0; f < 10; f++) {
+      const p1 = allVerts[0];
+      const p2 = allVerts[j[f]];
+      const p3 = allVerts[k[f]];
+      const triX = [p1[0], p2[0], p3[0], p1[0]];
+      const triY = [p1[1], p2[1], p3[1], p1[1]];
+      const triZ = [p1[2], p2[2], p3[2], p1[2]];
+      edgeTraces.push({
+        type: 'scatter3d',
+        x: triX,
+        y: triY,
+        z: triZ,
+        mode: 'lines',
+        line: { color: 'white', width: 1.5 },
+        showlegend: false
+      });
+    }
+
+    // Also add edges for the base decagon
+    const baseEdgeX = [];
+    const baseEdgeY = [];
+    const baseEdgeZ = [];
+    for (let i = 0; i < 10; i++) {
+      baseEdgeX.push(allVerts[1 + i][0]);
+      baseEdgeY.push(allVerts[1 + i][1]);
+      baseEdgeZ.push(allVerts[1 + i][2]);
+    }
+    // Close the loop
+    baseEdgeX.push(allVerts[1][0]);
+    baseEdgeY.push(allVerts[1][1]);
+    baseEdgeZ.push(allVerts[1][2]);
+
+    edgeTraces.push({
+      type: 'scatter3d',
+      x: baseEdgeX,
+      y: baseEdgeY,
+      z: baseEdgeZ,
+      mode: 'lines',
+      line: { color: 'white', width: 1.5 },
+      showlegend: false
+    });
+
+    const data = [mesh, ...edgeTraces];
+    const layout = {
+      scene: {
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        zaxis: { visible: false },
+        aspectmode: 'data',
+        camera: {
+          eye: { x: 1.5, y: 1.5, z: 1.2 }
+        },
+        bgcolor: '#000000'
+      },
+      margin: { t: 0, b: 0, l: 0, r: 0 },
+      paper_bgcolor: '#000000'
+    };
+
+    Plotly.newPlot('plot', data, layout, { displayModeBar: false });
+  </script>
+</body>
+</html>
